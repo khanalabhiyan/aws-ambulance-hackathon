@@ -1,0 +1,4 @@
+#!/bin/bash
+
+npm run build
+node ./build/index.js -l test

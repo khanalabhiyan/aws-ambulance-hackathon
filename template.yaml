@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  SmtpUsername:
+    Type: String
+    Description: smtp username
+  SmtpPassword:
+    Type: String
+    Description: smtp password
+
+Resources:
+  S3LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWSAmbulanceS3
+      Timeout: 5
+      Handler: aws-ambulance-s3/dist/index.handler
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          SendEmailLambda: !Ref ParseARNLambdaFunction
+      Policies:
+       - LambdaInvokePolicy:
+          FunctionName: !Ref ParseARNLambdaFunction
+       - Statement:
+         - Effect: Allow
+           Action:
+            - s3:*
+           Resource: "*"
+  
+  LambdaLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWSAmbulanceLambda
+      Timeout: 5
+      Handler: aws-ambulance-lambda/dist/index.handler
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          SendEmailLambda: !Ref ParseARNLambdaFunction
+      Policies:
+       - LambdaInvokePolicy:
+          FunctionName: !Ref ParseARNLambdaFunction
+       - Statement:
+         - Effect: Allow
+           Action:
+            - lambda:*
+           Resource: arn:aws:lambda:*:*:function:*
+       - Statement:
+         - Effect: Allow
+           Action:
+             - lambda:ListEventSourceMappings
+           Resource: "*"
+
+  EC2LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWSAmbulanceEC2
+      Timeout: 5
+      Handler: aws-ambulance-ec2/dist/index.handler
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          SendEmailLambda: !Ref ParseARNLambdaFunction
+      Policies:
+       - LambdaInvokePolicy:
+          FunctionName: !Ref ParseARNLambdaFunction
+       - Statement:
+          - Effect: Allow
+            Action:
+              - ec2:*
+            Resource: "*"
+
+  ParseARNLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWSAmbulanceParseARN
+      Timeout: 5
+      Handler: aws-ambulance-parse-arn/dist/index.handler
+      Runtime: nodejs20.x
+      Policies:
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Resource: "*"
+      Environment:
+        Variables:
+          SMTP_HOST: "smtp.gmail.com"
+          SMTP_PORT: 465
+          SMTP_USERNAME: !Ref SmtpUsername
+          SMTP_PASSWORD: !Ref SmtpPassword
+        
+  AWSAmbulanceStepFunction:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ./step-function.asl.json
+      DefinitionSubstitutions:
+        S3LambdaFunctionArn: !GetAtt S3LambdaFunction.Arn
+        LambdaLambdaFunctionArn: !GetAtt LambdaLambdaFunction.Arn
+        EC2LambdaFunctionArn: !GetAtt EC2LambdaFunction.Arn
+        ParseARNLambdaFunctionArn: !GetAtt ParseARNLambdaFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref S3LambdaFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref LambdaLambdaFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EC2LambdaFunction
+
+
+  AWSAmbulanceStartExecution:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ./start-execution.asl.json
+      DefinitionSubstitutions:
+        AWSAmbulanceStepFunctionArn: !GetAtt AWSAmbulanceStepFunction.Arn
+        ParseARNLambdaFunctionArn: !GetAtt ParseARNLambdaFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ParseARNLambdaFunction
+        - Statement:
+          - Effect: Allow
+            Action:
+            - states:StartExecution
+            Resource: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*
+        - Statement:
+          - Effect: Allow
+            Action:
+            - events:PutTargets
+            - events:PutRule
+            - events:DescribeRule
+            Resource: 
+            - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule
